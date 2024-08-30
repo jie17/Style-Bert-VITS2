@@ -15,6 +15,7 @@ import GPUtil
 import psutil
 import torch
 import uvicorn
+import ffmpeg
 from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -188,6 +189,7 @@ if __name__ == "__main__":
         reference_audio_path: Optional[str] = Query(
             None, description="スタイルを音声ファイルで行う"
         ),
+        audio_format: str = Query("opus", description="Audio format to return ('wav' or 'opus')"),
     ):
         """Infer text to speech(テキストから感情付き音声を生成する)"""
         logger.info(
@@ -253,7 +255,26 @@ if __name__ == "__main__":
         logger.success("Audio data generated and sent successfully")
         with BytesIO() as wavContent:
             wavfile.write(wavContent, sr, audio)
-            return Response(content=wavContent.getvalue(), media_type="audio/wav")
+            if audio_format == "opus":
+                # Transcode to Opus format using ffmpeg
+                wavContent.seek(0)
+                opusContent = BytesIO()
+
+                # ffmpeg process
+                process = (
+                    ffmpeg
+                    .input('pipe:0', format='wav')
+                    .output('pipe:1', format='webm', acodec='libopus')
+                    .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True)
+                )
+
+                output, _ = process.communicate(input=wavContent.read())
+                opusContent.write(output)
+                opusContent.seek(0)
+
+                return Response(content=opusContent.getvalue(), media_type="audio/webm")
+            else:
+                return Response(content=wavContent.getvalue(), media_type="audio/wav")
 
     @app.get("/models/info")
     def get_loaded_models_info():
